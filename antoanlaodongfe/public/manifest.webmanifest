@@ -1,0 +1,21 @@
+{
+  "name": "Hệ thống huấn luyện ATVSLĐ",
+  "short_name": "ATVSLĐ",
+  "description": "Hệ thống huấn luyện ATVSLĐ - Công ty than Dương Huy",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f5f5f5",
+  "theme_color": "#1565c0",
+  "lang": "vi",
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["education", "productivity"]
+}

@@ -1,0 +1,253 @@
+import { useMemo, useState } from 'react';
+import {
+  Box,
+  TextField,
+  MenuItem,
+  Button,
+  Card,
+  CardContent,
+  Typography,
+  Divider,
+  Alert,
+} from '@mui/material';
+import Grid from '@mui/material/Grid';
+import { Save, ArrowBack } from '@mui/icons-material';
+import { useNavigate } from 'react-router-dom';
+import { useSnackbar } from 'notistack';
+import PageHeader from '@/components/common/PageHeader';
+import DistributionEditor from '@/components/exam/DistributionEditor';
+import { useCreateTemplate } from '@/hooks/useExamTemplates';
+import { useAuth } from '@/contexts/AuthContext';
+import { ExamType, TrainingGroup } from '@/types/enums';
+import type { QuestionDistribution } from '@/types/examTemplate';
+import { examTypeLabels, trainingGroupLabels } from '@/utils/vietnameseLabels';
+import { useQuery } from '@tanstack/react-query';
+import { occupationApi, type Occupation } from '@/api/catalogApi';
+
+export default function TemplateCreatePage() {
+  const navigate = useNavigate();
+  const { enqueueSnackbar } = useSnackbar();
+  const { user } = useAuth();
+  const createMutation = useCreateTemplate();
+
+  const [form, setForm] = useState({
+    name: '',
+    exam_type: ExamType.PERIODIC_ATVSLD as string,
+    training_group: TrainingGroup.ATVSLD as string,
+    occupation: '',
+    skill_level: 3,
+    total_questions: 30,
+    duration_minutes: 45,
+    passing_score: 5,
+    excellent_threshold: 9,
+    good_threshold: 7,
+    average_threshold: 5,
+  });
+  const [distributions, setDistributions] = useState<QuestionDistribution[]>([]);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  const updateField = (field: string, value: string | number) => {
+    setForm((prev) => ({ ...prev, [field]: value }));
+    setErrors((prev) => ({ ...prev, [field]: '' }));
+  };
+  // Thêm phần này vào đầu component nếu chưa có:
+const { data: occupationsData } = useQuery({
+  queryKey: ['occupations', 'all'],
+  queryFn: () => occupationApi.list(false),
+});
+
+const occupationOptions = useMemo(() => [
+  { value: '', label: 'Chọn ngành nghề' },
+  ...(occupationsData?.map((o: Occupation) => ({ value: o.name, label: o.name })) ?? []),
+], [occupationsData]);
+  const validate = (): boolean => {
+    const newErrors: Record<string, string> = {};
+    if (!form.name.trim()) newErrors.name = 'Tên mẫu đề thi là bắt buộc';
+    if (!form.occupation.trim()) newErrors.occupation = 'Nghề là bắt buộc';
+    if (form.total_questions < 1) newErrors.total_questions = 'Tối thiểu 1 câu';
+    if (form.duration_minutes < 5) newErrors.duration_minutes = 'Tối thiểu 5 phút';
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
+  const handleSubmit = async () => {
+    if (!validate()) return;
+    try {
+      await createMutation.mutateAsync({
+        ...form,
+        exam_type: form.exam_type as typeof ExamType.PERIODIC_ATVSLD,
+        training_group: form.training_group as typeof TrainingGroup.ATVSLD,
+        distributions,
+        created_by: user?.id || '',
+      });
+      enqueueSnackbar('Tạo mẫu đề thi thành công!', { variant: 'success' });
+      navigate('/admin/templates');
+    } catch (err) {
+      enqueueSnackbar(`Lỗi: ${err instanceof Error ? err.message : 'Không xác định'}`, { variant: 'error' });
+    }
+  };
+
+  return (
+    <>
+      <PageHeader
+        title="Tạo mẫu đề thi"
+        action={
+          <Button variant="outlined" startIcon={<ArrowBack />} onClick={() => navigate('/admin/templates')}>
+            Quay lại
+          </Button>
+        }
+      />
+
+      <Card sx={{ mb: 3 }}>
+        <CardContent sx={{ p: { xs: 2, sm: 3 } }}>
+          <Typography variant="subtitle1" fontWeight={600} gutterBottom>
+            Thông tin cơ bản
+          </Typography>
+
+          <Grid container spacing={2.5}>
+            <Grid size={{ xs: 12 }}>
+              <TextField
+                fullWidth label="Tên mẫu đề thi" required
+                value={form.name} onChange={(e) => updateField('name', e.target.value)}
+                error={!!errors.name} helperText={errors.name}
+              />
+            </Grid>
+            <Grid size={{ xs: 12, sm: 6 }}>
+              <TextField select fullWidth label="Loại thi" value={form.exam_type}
+                onChange={(e) => updateField('exam_type', e.target.value)}
+              >
+                {Object.entries(examTypeLabels).map(([v, l]) => (
+                  <MenuItem key={v} value={v}>{l}</MenuItem>
+                ))}
+              </TextField>
+            </Grid>
+            <Grid size={{ xs: 12, sm: 6 }}>
+              <TextField select fullWidth label="Nhóm huấn luyện" value={form.training_group}
+                onChange={(e) => updateField('training_group', e.target.value)}
+              >
+                {Object.entries(trainingGroupLabels).map(([v, l]) => (
+                  <MenuItem key={v} value={v}>{l}</MenuItem>
+                ))}
+              </TextField>
+            </Grid>
+            <Grid size={{ xs: 12, sm: 6 }}>
+  <TextField
+    select
+    fullWidth 
+    label="Nghề" 
+    required
+    value={form.occupation} 
+    onChange={(e) => updateField('occupation', e.target.value)}
+    error={!!errors.occupation} 
+    helperText={errors.occupation}
+  >
+    {/* Đừng quên định nghĩa occupationOptions ở trên component nhé */}
+    {occupationOptions.map((option) => (
+      <MenuItem key={option.value} value={option.value}>
+        {option.label}
+      </MenuItem>
+    ))}
+  </TextField>
+</Grid>
+            <Grid size={{ xs: 12, sm: 6 }}>
+              <TextField
+                type="number" fullWidth label="Bậc thợ"
+                value={form.skill_level}
+                onChange={(e) => updateField('skill_level', Number(e.target.value))}
+                slotProps={{ htmlInput: { min: 1, max: 7 } }}
+              />
+            </Grid>
+            <Grid size={{ xs: 12, sm: 4 }}>
+              <TextField
+                type="number" fullWidth label="Tổng số câu"
+                value={form.total_questions}
+                onChange={(e) => updateField('total_questions', Number(e.target.value))}
+                error={!!errors.total_questions} helperText={errors.total_questions}
+                slotProps={{ htmlInput: { min: 1 } }}
+              />
+            </Grid>
+            <Grid size={{ xs: 12, sm: 4 }}>
+              <TextField
+                type="number" fullWidth label="Thời gian (phút)"
+                value={form.duration_minutes}
+                onChange={(e) => updateField('duration_minutes', Number(e.target.value))}
+                error={!!errors.duration_minutes} helperText={errors.duration_minutes}
+                slotProps={{ htmlInput: { min: 5 } }}
+              />
+            </Grid>
+            <Grid size={{ xs: 12, sm: 4 }}>
+              <TextField
+                type="number" fullWidth label="Điểm đạt"
+                value={form.passing_score}
+                onChange={(e) => updateField('passing_score', Number(e.target.value))}
+                slotProps={{ htmlInput: { min: 0, max: 10, step: 0.5 } }}
+              />
+            </Grid>
+          </Grid>
+
+          <Divider sx={{ my: 3 }} />
+
+          <Typography variant="subtitle1" fontWeight={600} gutterBottom>
+            Ngưỡng xếp loại
+          </Typography>
+          <Grid container spacing={2.5}>
+            <Grid size={{ xs: 12, sm: 4 }}>
+              <TextField
+                type="number" fullWidth label="Giỏi (≥)"
+                value={form.excellent_threshold}
+                onChange={(e) => updateField('excellent_threshold', Number(e.target.value))}
+                slotProps={{ htmlInput: { min: 0, max: 10, step: 0.5 } }}
+              />
+            </Grid>
+            <Grid size={{ xs: 12, sm: 4 }}>
+              <TextField
+                type="number" fullWidth label="Khá (≥)"
+                value={form.good_threshold}
+                onChange={(e) => updateField('good_threshold', Number(e.target.value))}
+                slotProps={{ htmlInput: { min: 0, max: 10, step: 0.5 } }}
+              />
+            </Grid>
+            <Grid size={{ xs: 12, sm: 4 }}>
+              <TextField
+                type="number" fullWidth label="Trung bình (≥)"
+                value={form.average_threshold}
+                onChange={(e) => updateField('average_threshold', Number(e.target.value))}
+                slotProps={{ htmlInput: { min: 0, max: 10, step: 0.5 } }}
+              />
+            </Grid>
+          </Grid>
+        </CardContent>
+      </Card>
+
+      <Card sx={{ mb: 3 }}>
+        <CardContent sx={{ p: { xs: 2, sm: 3 } }}>
+          <DistributionEditor
+            distributions={distributions}
+            totalQuestions={form.total_questions}
+            onChange={setDistributions}
+          />
+        </CardContent>
+      </Card>
+
+      {createMutation.isError && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {createMutation.error instanceof Error ? createMutation.error.message : 'Có lỗi xảy ra'}
+        </Alert>
+      )}
+
+      <Box sx={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
+        <Button variant="outlined" onClick={() => navigate('/admin/templates')}>
+          Hủy
+        </Button>
+        <Button
+          variant="contained"
+          startIcon={<Save />}
+          onClick={handleSubmit}
+          disabled={createMutation.isPending}
+        >
+          {createMutation.isPending ? 'Đang lưu...' : 'Tạo mẫu đề thi'}
+        </Button>
+      </Box>
+    </>
+  );
+}
