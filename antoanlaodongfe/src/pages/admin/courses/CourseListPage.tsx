@@ -1,12 +1,12 @@
 import { useState, useEffect, useMemo } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, useQueries } from '@tanstack/react-query';
 import {
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Paper, Typography, Box, TextField, MenuItem, Pagination,
   Skeleton, IconButton, Tooltip, Stack, Chip,
   InputAdornment,
 } from '@mui/material';
-import { Delete, Visibility, Search, Sort, CalendarToday } from '@mui/icons-material';
+import { Delete, Visibility, Search, Sort, CalendarToday, Article } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { useSnackbar } from 'notistack';
 import PageHeader from '@/components/common/PageHeader';
@@ -15,6 +15,7 @@ import EmptyState from '@/components/common/EmptyState';
 import ConfirmDialog from '@/components/common/ConfirmDialog';
 import { courseApi, type CourseResponse, type CourseListFilters } from '@/api/courseApi';
 import { occupationApi } from '@/api/catalogApi';
+import { documentApi } from '@/api/documentApi'; // Import thêm documentApi
 import type { Occupation } from '@/api/catalogApi';
 import type { ApprovalStatus, TrainingGroup } from '@/types/enums';
 import { approvalStatusLabels, trainingGroupLabels } from '@/utils/vietnameseLabels';
@@ -51,6 +52,7 @@ export default function CourseListPage() {
   const [status, setStatus] = useState('');
   const [group, setGroup] = useState('');
   const [occupation, setOccupation] = useState('');
+  const [sourceDoc, setSourceDoc] = useState(''); // Thêm state lọc tài liệu nguồn
   const [sortBy, setSortBy] = useState('created_at_desc');
   const [year, setYear] = useState('');
   const [month, setMonth] = useState('');
@@ -77,40 +79,76 @@ export default function CourseListPage() {
     return () => clearTimeout(timer);
   }, [search]);
 
-  // 3. Build params (Vẫn gửi lên BE để dự phòng sau này BE có xử lý)
+  // 3. Build params
   const queryParams: CourseListFilters = {
     page,
     page_size: pageSize,
   };
 
-  // 4. Fetch Data (Chỉ phụ thuộc vào page và sort, vì các filter khác ta tự xử lý nội bộ)
+  // 4. Fetch Data Courses
   const { data, isLoading } = useQuery({
     queryKey: ['courses', queryParams],
     queryFn: () => courseApi.list(queryParams),
   });
 
-  // 5. CLIENT-SIDE FILTERING: Tự động tách năm, tháng từ created_at và lọc bằng JavaScript
+  // --- LOGIC XỬ LÝ TÀI LIỆU NGUỒN (Lấy ID duy nhất và Fetch) ---
+  const allDocIds = useMemo(() => {
+    if (!data?.items) return [];
+    const ids = new Set<string>();
+    data.items.forEach((c: CourseResponse) => {
+      if (c.source_document_ids) {
+        c.source_document_ids.forEach(id => ids.add(id));
+      }
+    });
+    return Array.from(ids);
+  }, [data?.items]);
+
+  const documentQueries = useQueries({
+    queries: allDocIds.map((id) => ({
+      queryKey: ['doc-info', id],
+      queryFn: () => documentApi.get(id),
+      staleTime: 5 * 60 * 1000, // Cache 5 phút tránh gọi lại nhiều lần
+    }))
+  });
+
+  // Tạo map id -> chi tiết tài liệu để tra cứu nhanh & dropdown
+  const documentMap = useMemo(() => {
+    const map: Record<string, any> = {};
+    documentQueries.forEach(q => {
+      if (q.data) map[q.data.id] = q.data;
+    });
+    return map;
+  }, [documentQueries]);
+
+  const sourceDocOptions = useMemo(() => {
+    const options = [{ value: '', label: 'Tất cả tài liệu nguồn' }];
+    Object.values(documentMap).forEach(doc => {
+      options.push({ value: doc.id, label: doc.title || doc.file_name || 'Không xác định' });
+    });
+    return options;
+  }, [documentMap]);
+  // -------------------------------------------------------------
+
+  // 5. CLIENT-SIDE FILTERING
   const filteredItems = useMemo(() => {
     if (!data?.items) return [];
 
     return data.items.filter((course: CourseResponse) => {
-      // Ép kiểu thời gian created_at thành Date object để lấy năm, tháng
       const courseDate = new Date(course.created_at);
       const courseYear = courseDate.getFullYear().toString();
-      const courseMonth = (courseDate.getMonth() + 1).toString(); // getMonth() trả về 0-11 nên phải +1
+      const courseMonth = (courseDate.getMonth() + 1).toString();
 
-      // Kiểm tra từng điều kiện lọc
       const matchYear = year ? courseYear === year : true;
       const matchMonth = month ? courseMonth === month : true;
       const matchSearch = debouncedSearch ? course.title.toLowerCase().includes(debouncedSearch.toLowerCase()) : true;
       const matchOccupation = occupation ? course.occupation === occupation : true;
       const matchGroup = group ? course.training_group === group : true;
       const matchStatus = status ? course.status === status : true;
+      const matchSourceDoc = sourceDoc ? course.source_document_ids?.includes(sourceDoc) : true; // Điều kiện lọc mới
 
-      // Chỉ giữ lại khóa học thoả mãn TẤT CẢ các điều kiện trên
-      return matchYear && matchMonth && matchSearch && matchOccupation && matchGroup && matchStatus;
+      return matchYear && matchMonth && matchSearch && matchOccupation && matchGroup && matchStatus && matchSourceDoc;
     });
-  }, [data, year, month, debouncedSearch, occupation, group, status]); // Chạy lại hàm filter khi các biến này đổi
+  }, [data, year, month, debouncedSearch, occupation, group, status, sourceDoc]);
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => courseApi.delete(id),
@@ -181,6 +219,15 @@ export default function CourseListPage() {
             {occupationOptions.map((o) => <MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>)}
           </TextField>
 
+          {/* Thêm Dropdown Filter cho Tài liệu Nguồn */}
+          <TextField select size="small" label="Tài liệu nguồn" value={sourceDoc} onChange={handleFilterChange(setSourceDoc)} sx={{ flex: '1 1 200px' }}>
+            {sourceDocOptions.map((o) => (
+              <MenuItem key={o.value} value={o.value} sx={{ maxWidth: '300px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {o.label}
+              </MenuItem>
+            ))}
+          </TextField>
+
           <TextField select size="small" label="Năm" value={year} onChange={handleFilterChange(setYear)} sx={{ flex: '1 1 120px' }}
             slotProps={{ input: { startAdornment: (<InputAdornment position="start"><CalendarToday sx={{ fontSize: 16 }} color="action" /></InputAdornment>) } }}>
             {years.map((y) => <MenuItem key={y} value={y}>{y || 'Tất cả'}</MenuItem>)}
@@ -222,12 +269,31 @@ export default function CourseListPage() {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {/* SỬ DỤNG filteredItems THAY VÌ data.items Ở ĐÂY */}
                 {filteredItems.map((course: CourseResponse) => (
                   <TableRow key={course.id} sx={{ '&:hover': { bgcolor: 'action.hover' } }}>
                     <TableCell />
                     <TableCell>
                       <Typography variant="body2" fontWeight={500}>{course.title}</Typography>
+                      {/* HIỂN THỊ TÊN TÀI LIỆU NGUỒN Ở ĐÂY */}
+                      {course.source_document_ids && course.source_document_ids.length > 0 && (
+                        <Box sx={{ mt: 0.5, display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                          {course.source_document_ids.map(docId => {
+                            const docData = documentMap[docId];
+                            const queryState = documentQueries.find(q => q.data?.id === docId);
+
+                            return (
+                              <Chip
+                                key={docId}
+                                icon={<Article sx={{ fontSize: '12px !important' }} />}
+                                label={queryState?.isLoading ? 'Đang tải...' : (docData?.title || docData?.file_name || 'Không rõ nguồn')}
+                                size="small"
+                                variant="outlined"
+                                sx={{ fontSize: '0.65rem', height: 22, maxWidth: 200 }}
+                              />
+                            );
+                          })}
+                        </Box>
+                      )}
                     </TableCell>
                     <TableCell>{course.occupation}</TableCell>
                     <TableCell align="center">
@@ -237,6 +303,7 @@ export default function CourseListPage() {
                     <TableCell>
                       <Typography variant="body2">{formatDateTime(course.created_at)}</Typography>
                     </TableCell>
+                    
                     <TableCell align="center">
                       <Typography variant="body2" fontWeight={600}>
                         {course.lesson_count ?? course.lessons?.length ?? 0}
